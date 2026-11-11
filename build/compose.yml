@@ -1,0 +1,9 @@
+services:
+  easynr:
+    image: "${REGISTRY:?Set REGISTRY in build/.env}/${PROJECT:?Set PROJECT in build/.env}/easynr:${TAG:-latest}"
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+        - linux/arm64

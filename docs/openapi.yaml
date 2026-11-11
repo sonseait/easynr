@@ -1,0 +1,416 @@
+openapi: 3.0.3
+info:
+  title: EasyNR
+  version: 0.1.0
+  description: >-
+    Single-admin npm registry. Admin session mutations require same-origin Origin
+    and X-CSRF-Token. Login requires Origin. npm requests use Bearer tokens.
+    Package names in query parameters or npm paths must be URL encoded,
+    e.g. @team%2Fexample. Errors use {error:{code,message}} for admin requests
+    and {error,reason} for npm requests. Admin JSON bodies have a 64 KiB limit.
+servers:
+  - url: http://localhost:4873
+security:
+  - session: []
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: Public liveness check
+      responses:
+        '200': {description: '{"status":"ok"}'}
+  /api/login:
+    post:
+      security: []
+      summary: Sign in using the bootstrapped administrator password
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password]
+              properties:
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: Sets easynr_session HttpOnly cookie; returns csrfToken
+        '401': {description: Incorrect password}
+        '403': {description: Missing or invalid Origin}
+        '429': {description: Rate limited; Retry-After contains seconds}
+  /api/session:
+    get:
+      summary: Restore session and obtain csrfToken
+      responses:
+        '200': {description: '{"authenticated":true,"csrfToken":"..."}'}
+        '401': {description: Missing or expired session}
+  /api/logout:
+    post:
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Session invalidated; cookie cleared}
+  /api/tokens:
+    get:
+      summary: List token records without secrets or hashes
+      responses:
+        '200':
+          description: Token list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/Token'}
+    post:
+      summary: Create token; secret returned once
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, grants]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 200}
+                grants:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: {$ref: '#/components/schemas/Grant'}
+      responses:
+        '201': {description: '{"token": <Token>, "secret": "enr_..."}'}
+        '400': {description: Invalid name or grants}
+  /api/tokens/{id}:
+    delete:
+      summary: Revoke npm token
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Revoked}
+        '404': {description: Unknown token}
+  /api/packages:
+    get:
+      summary: List locally published packages, sorted by name
+      description: Packages only fetched or cached from an upstream are excluded. A locally published package remains listed when its name also exists upstream.
+      responses:
+        '200':
+          description: Package summary list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/PackageInfo'}
+  /api/package:
+    parameters:
+      - $ref: '#/components/parameters/Name'
+    get:
+      summary: Inspect merged metadata; populates remote metadata cache if needed
+      responses:
+        '200':
+          description: >-
+            npm packument with name, versions and dist-tags. Adds _easynr, a map
+            from version to {source,cached,bytes}; source is local or upstream ID.
+            Tarball paths are relative. Upstream credentials are never returned.
+        '404': {description: Unknown package}
+        '502': {description: Upstream unavailable with no usable local/cache data}
+    delete:
+      summary: Delete local version, or all local versions when version is omitted
+      description: Remote versions and tags may reappear. Disk space is reclaimed by offline GC.
+      parameters:
+        - {name: version, in: query, schema: {type: string}}
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Deleted}
+        '404': {description: Unknown local package or version}
+  /api/tag:
+    put:
+      summary: Create or replace a local tag targeting a local version
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, tag, version]
+              properties:
+                name: {type: string}
+                tag: {type: string}
+                version: {type: string}
+      responses:
+        '204': {description: Saved}
+        '400': {description: Invalid tag}
+        '404': {description: Target local version not found}
+    delete:
+      summary: Delete a local tag; a remote tag may reappear
+      parameters:
+        - $ref: '#/components/parameters/Name'
+        - {name: tag, in: query, required: true, schema: {type: string}}
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Deleted}
+        '404': {description: Unknown local tag}
+  /api/cache:
+    get:
+      summary: Cache statistics across all upstreams
+      description: Counts packages with remote metadata or downloaded tarballs; bytes deduplicate downloaded tarball hashes globally and exclude local packages and metadata. Cleared references are excluded even before offline GC reclaims disk space.
+      responses:
+        '200':
+          description: Remote cache totals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  packages: {type: integer}
+                  bytes: {type: integer, format: int64}
+    delete:
+      summary: Invalidate remote cache references; local packages are preserved
+      description: Omit name to clear all remote cache. Run offline GC to reclaim disk space.
+      parameters:
+        - {name: name, in: query, schema: {type: string}}
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Cache cleared}
+  /api/upstreams:
+    get:
+      summary: List upstreams; token is replaced with hasToken boolean
+      responses:
+        '200': {description: '{"items":[{"id":"npmjs","name":"npmjs","url":"https://registry.npmjs.org","hasToken":false}]}'}
+    put:
+      summary: Create or update upstream
+      description: >-
+        ID local is reserved. URL is immutable for an existing ID. Empty token
+        preserves existing credentials; '-' clears them. Credentials are stored
+        in the private metadata database. Only HTTP(S) URLs without userinfo,
+        query or fragment are accepted. An optional path prefix is supported.
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, name, url]
+              properties:
+                id: {type: string}
+                name: {type: string}
+                url: {type: string, format: uri}
+                token: {type: string, writeOnly: true}
+      responses:
+        '204': {description: Saved}
+        '400': {description: Invalid upstream}
+        '409': {description: URL change requires a new upstream ID}
+  /api/upstreams/{id}:
+    delete:
+      summary: Remove upstream; npmjs and routed upstreams cannot be removed
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Deleted; cached data is retained until clear/GC}
+        '404': {description: Unknown upstream}
+        '409': {description: Built-in or in-use upstream}
+  /api/upstreams/{id}/test:
+    post:
+      summary: Test a saved upstream with npm ping
+      description: Uses the stored URL and token with a ten-second timeout. Does not modify cache or routes. HTTP errors and network failures return a result with ok false; HTTP statusCode is zero when no response was received.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  statusCode: {type: integer}
+                  durationMs: {type: integer, format: int64}
+                  message: {type: string}
+        '404': {description: Unknown upstream}
+  /api/routes:
+    get:
+      responses:
+        '200': {description: '{"items":[{"scope":"@team","upstream":"company"}]}'}
+    put:
+      summary: Assign a scope to one remote; '*' sets the default remote
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [scope, upstream]
+              properties:
+                scope: {type: string, example: '@team'}
+                upstream: {type: string, example: company}
+      responses:
+        '204': {description: Saved}
+        '400': {description: Invalid scope or unknown upstream}
+    delete:
+      summary: Remove scope route (fallback to default); removing '*' restores npmjs
+      parameters:
+        - {name: scope, in: query, required: true, schema: {type: string}}
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204': {description: Removed}
+  /-/ping:
+    get:
+      security: [{npmToken: []}]
+      responses:
+        '200': {description: npm ping}
+  /-/whoami:
+    get:
+      security: [{npmToken: []}]
+      responses:
+        '200': {description: '{"username":"<token name>"}'}
+  /{package}:
+    parameters:
+      - {name: package, in: path, required: true, schema: {type: string}, description: 'Encoded name, e.g. @team%2Fexample'}
+    get:
+      security: [{npmToken: []}]
+      summary: Merged npm packument; requires package read access
+      description: Negotiates full or abbreviated install-v1 upstream metadata based on Accept, with separate upstream cache validators. Returns application/json with Vary Accept, a content ETag and private max-age=300, must-revalidate. Conditional requests authenticate and check access before returning 304. Local versions and tags take precedence in both formats.
+      responses:
+        '200': {description: Packument with rewritten tarball URLs}
+        '304': {description: Metadata unchanged; no response body}
+        '401': {description: Missing or invalid token}
+        '403': {description: Package access denied}
+        '404': {description: Package not found}
+        '502': {description: Upstream unavailable with no usable cache}
+    put:
+      security: [{npmToken: []}]
+      summary: npm publish; requires package write access
+      description: >-
+        npm publish JSON with one versions entry and one base64 _attachments
+        tarball. Limit 180 MiB JSON, 128 MiB decoded tarball. Local versions are
+        immutable; an existing upstream version may be published locally.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '201': {description: Published}
+        '400': {description: 'Invalid payload, checksum, name, version or tags'}
+        '409': {description: Local version already published}
+        '413': {description: Request body too large}
+  /{package}/{selector}:
+    get:
+      security: [{npmToken: []}]
+      summary: Metadata for an exact version or dist-tag
+      parameters:
+        - {name: package, in: path, required: true, schema: {type: string}}
+        - {name: selector, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Version metadata}
+        '404': {description: Package/version/tag not found after remote refresh}
+  /-/package/{package}/dist-tags:
+    get:
+      security: [{npmToken: []}]
+      parameters:
+        - {name: package, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Merged dist-tags object}
+  /-/package/{package}/dist-tags/{tag}:
+    parameters:
+      - {name: package, in: path, required: true, schema: {type: string}}
+      - {name: tag, in: path, required: true, schema: {type: string}}
+    put:
+      security: [{npmToken: []}]
+      summary: Set a local tag; requires write access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: string, example: 1.0.0}
+      responses:
+        '200': {description: Tag saved}
+        '404': {description: Local version not found}
+    delete:
+      security: [{npmToken: []}]
+      summary: Remove local tag; requires write access
+      responses:
+        '200': {description: Tag removed}
+        '404': {description: Local tag not found}
+  /-/tarballs/{id}.tgz:
+    get:
+      security: [{npmToken: []}]
+      summary: Download local/cached tarball or fetch, verify and cache remote tarball
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, pattern: '^[a-f0-9]{64}$'}}
+      responses:
+        '200': {description: 'Tarball; private max-age=31536000, immutable; supports HEAD, ETag and byte range requests'}
+        '304': {description: Tarball unchanged; no response body}
+        '403': {description: Token lacks read access to the artifact's package}
+        '404': {description: Unknown or invalidated artifact}
+        '502': {description: 'Remote unavailable, oversized tarball or integrity mismatch'}
+components:
+  securitySchemes:
+    session: {type: apiKey, in: cookie, name: easynr_session}
+    npmToken: {type: http, scheme: bearer}
+  parameters:
+    Origin: {name: Origin, in: header, required: true, schema: {type: string}, description: Exact browser origin matching request Host}
+    CSRF: {name: X-CSRF-Token, in: header, required: true, schema: {type: string}}
+    Name: {name: name, in: query, required: true, schema: {type: string}}
+  schemas:
+    Grant:
+      type: object
+      additionalProperties: false
+      required: [package, permission]
+      properties:
+        package: {type: string, description: 'Exact npm package, @scope/* or *'}
+        permission: {type: string, enum: [read, write]}
+    Token:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        createdAt: {type: string, format: date-time}
+        grants:
+          type: array
+          items: {$ref: '#/components/schemas/Grant'}
+    PackageInfo:
+      type: object
+      properties:
+        name: {type: string}
+        localVersions: {type: integer}
+        cachedVersions: {type: integer}
+        localBytes: {type: integer, format: int64}
+        cachedBytes: {type: integer, format: int64}
+        updatedAt: {type: string, format: date-time}
