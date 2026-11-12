@@ -8,6 +8,46 @@ async function login(page) {
  await page.getByRole('button', {name: 'Sign in', exact: true}).click();
  await expect(page.getByRole('heading', {name: 'Packages', exact: true})).toBeVisible();
 }
+test('dialogs scroll content while keeping the title and footer visible', async ({page}) => {
+ const versions = Object.fromEntries(Array.from({length: 80}, (_, i) => [`1.0.${i}`, {version: `1.0.${i}`} ]));
+ const fixtures = {
+  '/api/session': {csrfToken: 'layout-test'},
+  '/api/packages': {items: [{name: '@demo/hello', localVersions: 1, localBytes: 0}]},
+  '/api/cache': {packages: 0, bytes: 0}, '/api/package': {versions}, '/api/upstreams': {items: []}
+ };
+ await page.route('**/api/**', route => route.fulfill({json: fixtures[new URL(route.request().url()).pathname]}));
+ await page.goto('/');
+ await page.getByRole('button', {name: '@demo/hello', exact: true}).click();
+ const modal = page.getByRole('dialog');
+ const width = (await modal.boundingBox()).width;
+ expect(width).toBe(Math.min(page.viewportSize().width - 32, 1120));
+
+ async function checkContentScroll() {
+  const content = modal.locator('.dialog-content');
+  const title = await modal.getByRole('heading').boundingBox();
+  const footer = await modal.locator('.dialog-actions').boundingBox();
+  expect(footer.y + footer.height).toBeLessThanOrEqual(page.viewportSize().height);
+  await expect(modal.locator('.dialog-actions').getByRole('button', {name: 'Close', exact: true})).toBeInViewport();
+  const scroll = await content.evaluate(n => {
+   n.scrollTop = 0;
+   const before = n.scrollTop;
+   n.scrollTop = n.scrollHeight;
+   return {before, after: n.scrollTop};
+  });
+  expect(scroll.after).toBeGreaterThan(scroll.before);
+  expect(await modal.evaluate(n => n.scrollTop)).toBe(0);
+  expect(await modal.getByRole('heading').boundingBox()).toEqual(title);
+  expect(await modal.locator('.dialog-actions').boundingBox()).toEqual(footer);
+  await modal.getByRole('button', {name: 'Close', exact: true}).click();
+ }
+
+ await checkContentScroll();
+ await page.setViewportSize({width: page.viewportSize().width, height: 320});
+ await page.getByRole('button', {name: 'Upstreams', exact: true}).click();
+ await page.getByRole('button', {name: 'Add upstream', exact: true}).click();
+ await expect(modal.locator('.dialog-actions').getByRole('button', {name: 'Save upstream', exact: true})).toBeInViewport();
+ await checkContentScroll();
+});
 test('live console: session, package, one-time token, routes and logout', async ({page}) => {
  const errors = []; page.on('pageerror', e => errors.push(e.message));
  await login(page);

@@ -3,6 +3,10 @@
 Deployment, cache behavior, access control and recovery for EasyNR.
 For a product overview and quick start, see the [README](../README.md).
 
+Console dialogs keep their title and footer buttons visible while their content
+scrolls. Package inspection expands to 1120px on larger screens and fits the
+viewport on smaller screens.
+
 ## Resolution and cache
 
 Every package follows the same policy; there is no local-only mode:

@@ -36,6 +36,7 @@ function field(form, title, name, options = {}) {
 function submit(form, text, action) {
  const b = el('button', text, {type: 'submit', class: 'primary'}); form.append(b);
  form.addEventListener('submit', e => { e.preventDefault(); perform(action, b); });
+ return b;
 }
 function heading(title, description) { app.replaceChildren(el('h1', title), el('p', description)); }
 function list(items, empty, render, parent = app) {
@@ -44,7 +45,7 @@ function list(items, empty, render, parent = app) {
 }
 function bytes(n) { if (!n) return '0 B'; const units = ['B', 'KiB', 'MiB', 'GiB']; const i = Math.min(3, Math.floor(Math.log(n) / Math.log(1024))); return (n / 1024 ** i).toFixed(i ? 1 : 0) + ' ' + units[i]; }
 function dialog(title, build) {
- const d = el('dialog'); d.append(el('h2', title)); const content = el('div'); const actions = el('div', null, {class: 'dialog-actions'}); d.append(content); build(content, actions);
+ const d = el('dialog'); d.append(el('h2', title)); const content = el('div', null, {class: 'dialog-content'}); const actions = el('div', null, {class: 'dialog-actions'}); d.append(content); build(content, actions);
  actions.append(button('Close', () => { d.close(); d.replaceChildren(); d.remove(); })); d.append(actions); d.addEventListener('close', () => { d.replaceChildren(); d.remove(); }); document.body.append(d); d.showModal(); return d;
 }
 function login() {
@@ -113,7 +114,7 @@ async function details(name) {
   packageActions.append(button('Clear remote cache', async () => { if (!confirm('Clear remote cache for ' + name + '?')) return; await api('cache?name=' + encodeURIComponent(name), 'DELETE'); document.querySelectorAll('dialog').forEach(d => d.close()); await show('Packages'); }));
   packageActions.append(button('Delete local package', async () => { if (prompt('Delete all local versions? Remote versions may reappear. Type the exact package name:') !== name) return; await api('package?name=' + encodeURIComponent(name), 'DELETE'); document.querySelectorAll('dialog').forEach(d => d.close()); await show('Packages'); }, 'danger'));
   box.append(packageActions);
- });
+ }).classList.add('inspect-dialog');
 }
 function tokens(items) {
  heading('Tokens', 'Secrets are shown once. Grant read or write access to exact packages, @scope/* or *.');
@@ -165,11 +166,11 @@ function routes(upstreams, items) {
  submit(form, 'Save route', async () => { await api('routes', 'PUT', {scope: scope.value, upstream: select.value}); message('Route saved.'); await show(); }); app.append(form);
 }
 function upstreamForm(existing) {
- let d; d = dialog(existing ? 'Edit upstream' : 'Add upstream', box => {
-  const form = el('form'); const id = field(form, 'ID', 'id', {value: existing?.id}); if (existing) id.readOnly = true;
+ let d; d = dialog(existing ? 'Edit upstream' : 'Add upstream', (box, actions) => {
+  const form = el('form', null, {id: 'upstream-form'}); const id = field(form, 'ID', 'id', {value: existing?.id}); if (existing) id.readOnly = true;
   const name = field(form, 'Display name', 'name', {value: existing?.name}); const url = field(form, 'Registry URL', 'url', {type: 'url', value: existing?.url}); if (existing) url.readOnly = true;
   const token = field(form, 'Bearer token (empty keeps existing, - clears)', 'token', {type: 'password', required: false}); token.autocomplete = 'new-password';
-  submit(form, 'Save upstream', async () => { await api('upstreams', 'PUT', {id: id.value, name: name.value, url: url.value, token: token.value}); token.value = ''; d.close(); message('Upstream saved.'); await show('Upstreams'); }); box.append(form);
+  const save = submit(form, 'Save upstream', async () => { await api('upstreams', 'PUT', {id: id.value, name: name.value, url: url.value, token: token.value}); token.value = ''; d.close(); message('Upstream saved.'); await show('Upstreams'); }); save.setAttribute('form', 'upstream-form'); actions.append(save); box.append(form);
  });
 }
 perform(async () => { try { const data = await api('session'); csrf = data.csrfToken; await show(); } catch { login(); } });

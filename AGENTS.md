@@ -12,6 +12,7 @@
 - Validate HTTP inputs and retain authentication and CSRF checks.
 - Match JavaScript double quotes, semicolons, and camelCase names.
 - Use native accessible controls and DOM text APIs for untrusted package metadata.
+- Keep modal headings and footer actions outside the scrollable `.dialog-content`.
 - Use self-explanatory names and cohesive functions; avoid duplication and unnecessary abstractions.
 - Comment only non-obvious constraints or decisions; preserve legal/tooling directives.
 - Keep documentation in English and update affected configuration and usage docs with changes.
