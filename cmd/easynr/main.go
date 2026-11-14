@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -65,6 +66,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		return json.NewEncoder(out).Encode(result)
 	}
+	engine.Logger = slog.New(slog.NewTextHandler(out, nil))
 	handler, err := httpapi.New(auth.Service{Store: s}, engine)
 	if err != nil {
 		return err

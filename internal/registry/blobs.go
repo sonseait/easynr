@@ -170,10 +170,10 @@ func (e *Engine) Blob(ctx context.Context, id string) (Artifact, error) {
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode == 404 {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: tarball upstream %q returned HTTP 404", ErrNotFound, current.Source)
 		}
 		if resp.StatusCode != 200 {
-			return nil, ErrUpstream
+			return nil, fmt.Errorf("%w: tarball upstream %q returned HTTP %d", ErrUpstream, current.Source, resp.StatusCode)
 		}
 		current.Hash, current.Size, err = e.storeStream(resp.Body, current.Integrity, current.Shasum)
 		if err != nil {

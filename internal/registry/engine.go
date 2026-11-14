@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -67,6 +68,7 @@ type Engine struct {
 	Auth           auth.Service
 	Dir, PublicURL string
 	Client         *http.Client
+	Logger         *slog.Logger
 	TTL            time.Duration
 	Now            func() time.Time
 	flights        singleflight.Group
@@ -84,7 +86,7 @@ func New(s *state.Store, dir, publicURL string) (*Engine, error) {
 			return nil, err
 		}
 	}
-	e := &Engine{Store: s, Auth: auth.Service{Store: s}, Dir: dir, PublicURL: publicURL, TTL: 5 * time.Minute, Now: time.Now,
+	e := &Engine{Store: s, Auth: auth.Service{Store: s}, Dir: dir, PublicURL: publicURL, TTL: 5 * time.Minute, Now: time.Now, Logger: slog.Default(),
 		metadataSlots: make(chan struct{}, 4), downloadSlots: make(chan struct{}, 8)}
 	// Redirects never forward credentials to a different origin.
 	e.Client = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(r *http.Request, via []*http.Request) error {

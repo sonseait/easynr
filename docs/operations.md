@@ -80,6 +80,29 @@ anything remotely. Old tarball references may remain usable until GC. Clearing
 remote cache invalidates its tarball references immediately; a subsequent metadata
 request rebuilds them. Offline GC reclaims the unreferenced files.
 
+## Tarball URLs and troubleshooting
+
+Metadata uses `/-/tarballs/<id>.tgz` URLs tied to the original artifact source.
+Existing lockfiles may request npm-style URLs such as
+`/minimatch/-/minimatch-11.0.8.tgz` or `/@team/pkg/-/pkg-1.0.0.tgz`.
+EasyNR accepts GET and HEAD on these paths, checks package read access, and
+returns a temporary 307 redirect to the internal artifact URL. The filename must
+contain the unscoped package name and an exact semantic version. The alias uses
+current routes and local version precedence; its redirect is `no-store` because
+its target can change. Existing internal artifact URLs keep their original content.
+The redirected download uses the same checksum verification and cache as metadata
+URLs. npm-style aliases need local or cached metadata to resolve while offline.
+
+Registry operation errors (400, 404, 409, 500 and 502) write structured text logs
+to stderr with `method`, `path`, `status`, `code` and `error`. Tarball upstream
+HTTP failures include the upstream ID and response status. Request query strings,
+headers, bodies and upstream URLs are omitted. Successful requests and routine
+authentication/access rejections are not logged.
+Use `docker logs easynr` for container logs. If a failing request has no registry
+error log, inspect the reverse proxy logs and confirm the deployed binary includes
+this logging. Requests rejected before reaching the registry handler cannot
+produce a registry operation log.
+
 ## Multiple upstreams
 
 The built-in default is `https://registry.npmjs.org` (`npmjs`). Use the separate
@@ -157,7 +180,9 @@ management through npm are not implemented. Yarn/pnpm compatibility is not teste
 The console follows the system light/dark theme and works on mobile. Its package
 list shows only packages published locally, their published version count and
 stored tarball bytes. Packages only fetched from upstreams appear in cache
-statistics. Package inspection still merges local and remote versions. Byte
+statistics. Package inspection still merges local and remote versions and lists
+versions in descending semantic version order. Stable releases precede their
+prereleases; build metadata does not affect precedence. Byte
 counts deduplicate shared blobs within each package/source category and include
 only current metadata references; they are not total filesystem usage.
 

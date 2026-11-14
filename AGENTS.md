@@ -10,6 +10,8 @@
 - Handle errors explicitly, propagate request contexts, and close bodies/files.
 - Preserve metadata bounds, archive checksum validation, storage locks, and upstream credential origin restrictions.
 - Validate HTTP inputs and retain authentication and CSRF checks.
+- Keep npm-style tarball aliases temporary; internal artifact URLs preserve source identity.
+- Log registry operation failures without query strings, credentials or upstream URLs.
 - Match JavaScript double quotes, semicolons, and camelCase names.
 - Use native accessible controls and DOM text APIs for untrusted package metadata.
 - Keep modal headings and footer actions outside the scrollable `.dialog-content`.

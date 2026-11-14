@@ -177,6 +177,13 @@ func TestNPMWorkflow(t *testing.T) {
 			if !bytes.Contains(content, []byte("remote-1.0.0")) {
 				t.Fatal("remote tarball not installed", string(content))
 			}
+			aliasWork := t.TempDir()
+			basename := name[strings.LastIndex(name, "/")+1:]
+			npm(t, aliasWork, true, "install", server.URL+"/"+name+"/-/"+basename+"-1.0.0.tgz", "--ignore-scripts", "--package-lock=false")
+			aliasContent, err := os.ReadFile(filepath.Join(aliasWork, "node_modules", filepath.FromSlash(name), "index.js"))
+			if err != nil || !bytes.Contains(aliasContent, []byte("remote-1.0.0")) {
+				t.Fatal("npm-style tarball URL not installed", err, string(aliasContent))
+			}
 			pub := filepath.Join(dir, fmt.Sprint("publish-", i))
 			_ = os.MkdirAll(pub, 0700)
 			publish := func(version string) {

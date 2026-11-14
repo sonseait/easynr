@@ -58,6 +58,17 @@ npm 11.16.0, Playwright 1.64.1 and Docker Engine 29.9.2.
   An isolated real-npm container load test measured CPU and kernel peak memory;
   methodology and observed results are in [performance.md](performance.md).
 
+## Tarball compatibility regression (2026-11-15)
+
+- `make verify` passed formatting, vet, race tests, binary build and module checks.
+- `make test-e2e` passed real npm installs from npm-style tarball URLs for scoped
+  and unscoped packages through the authenticated 307 redirect.
+- Registry regression tests cover alias validation, GET/HEAD, access rejection
+  before metadata lookup, missing versions, offline cache reuse, local precedence
+  and preservation of previously resolved artifact content.
+- Error log checks cover malformed aliases and upstream HTTP failures, including
+  status/cause fields and exclusion of bearer tokens, query strings and upstream URLs.
+
 ## Limits of these results
 
 Docker execution was verified for linux/arm64. The Dockerfile supports build target

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -51,10 +52,10 @@ func npmJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-func npmMetadata(w http.ResponseWriter, r *http.Request, v any) {
+func (e *Engine) npmMetadata(w http.ResponseWriter, r *http.Request, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
-		npmError(w, err)
+		e.npmError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -63,7 +64,7 @@ func npmMetadata(w http.ResponseWriter, r *http.Request, v any) {
 	http.ServeContent(w, r, "metadata.json", zeroTime, bytes.NewReader(body))
 }
 
-func npmError(w http.ResponseWriter, err error) {
+func (e *Engine) npmError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code, message := 500, "EINTERNAL", "registry operation failed"
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -75,6 +76,11 @@ func npmError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrUpstream):
 		status, code, message = 502, "EUPSTREAM", "upstream unavailable or invalid response"
 	}
+	level := slog.LevelWarn
+	if status >= 500 {
+		level = slog.LevelError
+	}
+	e.Logger.Log(r.Context(), level, "registry request failed", "method", r.Method, "path", r.URL.Path, "status", status, "code", code, "error", err)
 	npmJSON(w, status, map[string]string{"error": code, "reason": message})
 }
 func (e *Engine) base(r *http.Request) string {
@@ -119,12 +125,12 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "-/tarballs/"), ".tgz")
 		if len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
-			npmError(w, ErrNotFound)
+			e.npmError(w, r, ErrNotFound)
 			return
 		}
 		var a Artifact
 		if err := e.read("artifacts", id, &a); err != nil {
-			npmError(w, err)
+			e.npmError(w, r, err)
 			return
 		}
 		if !auth.Allows(token.Grants, a.Package, "read") {
@@ -133,12 +139,12 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		a, err = e.Blob(r.Context(), id)
 		if err != nil {
-			npmError(w, err)
+			e.npmError(w, r, err)
 			return
 		}
 		f, err := os.Open(e.blobPath(a.Hash))
 		if err != nil {
-			npmError(w, ErrNotFound)
+			e.npmError(w, r, ErrNotFound)
 			return
 		}
 		defer f.Close()
@@ -152,7 +158,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		tail := strings.TrimPrefix(path, "-/package/")
 		name, tag, ok := strings.Cut(tail, "/dist-tags")
 		if !ok || !auth.ValidPackage(name) {
-			npmError(w, ErrNotFound)
+			e.npmError(w, r, ErrNotFound)
 			return
 		}
 		action := "read"
@@ -167,10 +173,10 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			doc, err := e.Metadata(r.Context(), name, false)
 			if err != nil {
-				npmError(w, err)
+				e.npmError(w, r, err)
 				return
 			}
-			npmMetadata(w, r, doc["dist-tags"])
+			e.npmMetadata(w, r, doc["dist-tags"])
 			return
 		}
 		if r.Method != "PUT" && r.Method != "DELETE" {
@@ -181,19 +187,23 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "PUT" {
 			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1024))
 			if err != nil || json.Unmarshal(body, &version) != nil {
-				npmError(w, ErrInvalid)
+				e.npmError(w, r, ErrInvalid)
 				return
 			}
 		}
 		if err := e.SetTag(name, tag, version, r.Method == "DELETE"); err != nil {
-			npmError(w, err)
+			e.npmError(w, r, err)
 			return
 		}
 		npmJSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
 	if strings.HasPrefix(path, "-/") {
-		npmError(w, ErrNotFound)
+		e.npmError(w, r, ErrNotFound)
+		return
+	}
+	if name, filename, ok := strings.Cut(path, "/-/"); ok {
+		e.npmTarball(w, r, token, name, filename)
 		return
 	}
 	// URL.Path is already decoded, including npm's @scope%2fname encoding.
@@ -202,7 +212,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	selector := ""
 	if strings.HasPrefix(path, "@") {
 		if len(parts) < 2 || len(parts) > 3 {
-			npmError(w, ErrInvalid)
+			e.npmError(w, r, ErrInvalid)
 			return
 		}
 		name = parts[0] + "/" + parts[1]
@@ -211,7 +221,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if len(parts) > 2 {
-			npmError(w, ErrInvalid)
+			e.npmError(w, r, ErrInvalid)
 			return
 		}
 		name = parts[0]
@@ -220,7 +230,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !auth.ValidPackage(name) {
-		npmError(w, ErrInvalid)
+		e.npmError(w, r, ErrInvalid)
 		return
 	}
 	action := "read"
@@ -253,17 +263,17 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				if item, ok := p.Versions[version]; ok {
 					rendered := render(Document{"versions": Document{version: item}}, e.base(r))
-					npmMetadata(w, r, object(rendered["versions"])[version])
+					e.npmMetadata(w, r, object(rendered["versions"])[version])
 					return
 				}
 			} else if !errors.Is(err, ErrNotFound) {
-				npmError(w, err)
+				e.npmError(w, r, err)
 				return
 			}
 		}
 		doc, err := e.metadata(r.Context(), name, false, abbreviated)
 		if err != nil {
-			npmError(w, err)
+			e.npmError(w, r, err)
 			return
 		}
 		if selector != "" {
@@ -275,7 +285,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if versions[version] == nil {
 				doc, err = e.metadata(r.Context(), name, true, abbreviated)
 				if err != nil {
-					npmError(w, err)
+					e.npmError(w, r, err)
 					return
 				}
 				versions = object(doc["versions"])
@@ -285,17 +295,17 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if versions[version] == nil {
-				npmError(w, ErrNotFound)
+				e.npmError(w, r, ErrNotFound)
 				return
 			}
 			rendered := render(Document{"versions": Document{version: versions[version]}}, e.base(r))
-			npmMetadata(w, r, object(rendered["versions"])[version])
+			e.npmMetadata(w, r, object(rendered["versions"])[version])
 			return
 		}
-		npmMetadata(w, r, render(doc, e.base(r)))
+		e.npmMetadata(w, r, render(doc, e.base(r)))
 	case "PUT":
 		if selector != "" {
-			npmError(w, ErrInvalid)
+			e.npmError(w, r, ErrInvalid)
 			return
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPublish))
@@ -304,11 +314,55 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err = e.Publish(name, body); err != nil {
-			npmError(w, err)
+			e.npmError(w, r, err)
 			return
 		}
 		npmJSON(w, 201, map[string]bool{"ok": true})
 	default:
 		w.WriteHeader(405)
 	}
+}
+
+func (e *Engine) npmTarball(w http.ResponseWriter, r *http.Request, token auth.TokenRecord, name, filename string) {
+	basename := name[strings.LastIndex(name, "/")+1:]
+	version := strings.TrimSuffix(strings.TrimPrefix(filename, basename+"-"), ".tgz")
+	if !auth.ValidPackage(name) || filename != basename+"-"+version+".tgz" || !validVersion(version) {
+		e.npmError(w, r, fmt.Errorf("%w: expected /<package>/-/<name>-<version>.tgz", ErrInvalid))
+		return
+	}
+	if r.Method != "GET" && r.Method != "HEAD" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !auth.Allows(token.Grants, name, "read") {
+		npmJSON(w, 403, map[string]string{"error": "E403"})
+		return
+	}
+	select {
+	case e.metadataSlots <- struct{}{}:
+		defer func() { <-e.metadataSlots }()
+	case <-r.Context().Done():
+		return
+	}
+	p, err := e.local(name)
+	if err == nil && p.Versions[version] != nil {
+		http.Redirect(w, r, str(object(p.Versions[version]["dist"])["tarball"]), http.StatusTemporaryRedirect)
+		return
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		e.npmError(w, r, err)
+		return
+	}
+	for _, force := range []bool{false, true} {
+		doc, err := e.metadata(r.Context(), name, force, true)
+		if err != nil {
+			e.npmError(w, r, err)
+			return
+		}
+		if item := object(doc["versions"])[version]; item != nil {
+			http.Redirect(w, r, str(object(object(item)["dist"])["tarball"]), http.StatusTemporaryRedirect)
+			return
+		}
+	}
+	e.npmError(w, r, ErrNotFound)
 }

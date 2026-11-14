@@ -91,13 +91,36 @@ function packages(items, cache) {
   const text = el('div'); text.append(button(p.name, () => details(p.name)), el('p', `${p.localVersions} published versions · ${bytes(p.localBytes)} stored`)); row.append(text);
  });
 }
+function compareVersions(a, b) {
+ const pattern = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+ const left = a.match(pattern), right = b.match(pattern);
+ if (!left || !right) return left ? 1 : right ? -1 : a.localeCompare(b, "en", {numeric: true});
+ for (let i = 1; i <= 3; i++) {
+  const x = BigInt(left[i]), y = BigInt(right[i]);
+  if (x !== y) return x < y ? -1 : 1;
+ }
+ if (left[4] === undefined || right[4] === undefined) return left[4] === right[4] ? 0 : left[4] === undefined ? 1 : -1;
+ const prereleaseA = left[4].split("."), prereleaseB = right[4].split(".");
+ for (let i = 0; i < Math.max(prereleaseA.length, prereleaseB.length); i++) {
+  const x = prereleaseA[i], y = prereleaseB[i];
+  if (x === y) continue;
+  if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+  const numericA = /^\d+$/.test(x), numericB = /^\d+$/.test(y);
+  if (numericA && numericB) {
+   const numberA = BigInt(x), numberB = BigInt(y);
+   if (numberA !== numberB) return numberA < numberB ? -1 : 1;
+  } else if (numericA !== numericB) return numericA ? -1 : 1;
+  else return x < y ? -1 : 1;
+ }
+ return 0;
+}
 async function details(name) {
  const data = await api('package?name=' + encodeURIComponent(name));
  dialog(name, box => {
   box.append(el('pre', `npm install ${name} --registry=${location.origin}/`));
   const tags = el('p', 'Dist-tags: ' + Object.entries(data['dist-tags'] || {}).map(([t, v]) => t + '=' + v).join(', ')); box.append(tags);
   const table = el('table'); const head = el('tr'); for (const label of ['Version', 'Source', 'Stored', 'Actions']) head.append(el('th', label)); const thead = el('thead'); thead.append(head); table.append(thead); const body = el('tbody'); table.append(body);
-  for (const [version, meta] of Object.entries(data.versions || {}).reverse()) {
+  for (const [version, meta] of Object.entries(data.versions || {}).sort(([a], [b]) => compareVersions(b, a))) {
    const source = data._easynr?.[version] || {}; const tr = el('tr'); tr.append(el('td', version), el('td', source.source || 'remote'), el('td', source.cached ? bytes(source.bytes) : 'Not downloaded'));
    const actions = el('td'); const buttons = el('div', null, {class: 'button-group'}); actions.append(buttons);
    buttons.append(button('Metadata', () => dialog(version, target => target.append(el('pre', JSON.stringify(meta, null, 2))))));

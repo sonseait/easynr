@@ -368,6 +368,24 @@ paths:
       responses:
         '200': {description: Tag removed}
         '404': {description: Local tag not found}
+  /{package}/-/{filename}:
+    get:
+      security: [{npmToken: []}]
+      summary: Resolve an npm-style tarball URL to the current artifact
+      description: Supports GET and HEAD. Checks package read access and uses current routes and local version precedence. Redirects are no-store; metadata continues to emit source-specific internal artifact URLs.
+      parameters:
+        - {name: package, in: path, required: true, schema: {type: string}, description: 'Package name, including scope when present'}
+        - {name: filename, in: path, required: true, schema: {type: string}, description: 'Unscoped package name followed by -<exact-semver>.tgz'}
+      responses:
+        '307':
+          description: Temporary redirect to the internal artifact URL
+          headers:
+            Location: {schema: {type: string}, description: 'Relative /-/tarballs/<id>.tgz URL'}
+        '400': {description: Invalid package name or tarball filename}
+        '401': {description: Missing or invalid token}
+        '403': {description: Package access denied}
+        '404': {description: Package or version not found}
+        '502': {description: Upstream unavailable with no usable metadata cache}
   /-/tarballs/{id}.tgz:
     get:
       security: [{npmToken: []}]

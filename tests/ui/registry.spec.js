@@ -9,7 +9,8 @@ async function login(page) {
  await expect(page.getByRole('heading', {name: 'Packages', exact: true})).toBeVisible();
 }
 test('dialogs scroll content while keeping the title and footer visible', async ({page}) => {
- const versions = Object.fromEntries(Array.from({length: 80}, (_, i) => [`1.0.${i}`, {version: `1.0.${i}`} ]));
+ const expectedVersions = ["11.0.8", "11.0.0", "11.0.0+build.2", "11.0.0-rc.10", "11.0.0-rc.2", "11.0.0-beta2", "11.0.0-beta11", "11.0.0-beta.2", "11.0.0-beta", "11.0.0-alpha.10", "11.0.0-alpha.2", "10.10.0", "10.2.0", "9.10.0", "9.2.0", ...Array.from({length: 80}, (_, i) => `1.0.${79 - i}`)];
+ const versions = Object.fromEntries([...expectedVersions].sort().map(version => [version, {version}]));
  const fixtures = {
   '/api/session': {csrfToken: 'layout-test'},
   '/api/packages': {items: [{name: '@demo/hello', localVersions: 1, localBytes: 0}]},
@@ -19,6 +20,7 @@ test('dialogs scroll content while keeping the title and footer visible', async 
  await page.goto('/');
  await page.getByRole('button', {name: '@demo/hello', exact: true}).click();
  const modal = page.getByRole('dialog');
+ await expect(modal.locator("tbody tr td:first-child")).toHaveText(expectedVersions);
  const width = (await modal.boundingBox()).width;
  expect(width).toBe(Math.min(page.viewportSize().width - 32, 1120));
 
